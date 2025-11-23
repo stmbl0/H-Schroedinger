@@ -1,0 +1,3 @@
+[workspace]
+resolver = "3"
+members = ["h-schroedinger", "hydrogen-orb-core"]
