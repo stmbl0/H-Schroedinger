@@ -7,6 +7,7 @@ pub struct State {
     pub y2: f64, // ψ'(r)
 }
 
+#[derive(Clone, Copy)]
 pub struct Params {
     /// Energy of the electron
     pub E: f64,
@@ -18,6 +19,7 @@ pub struct Params {
     pub m: i16,
 }
 
+#[derive(Clone, Copy)]
 pub struct SolverOptions {
     pub r_start: f64,
     pub r_end: f64,
