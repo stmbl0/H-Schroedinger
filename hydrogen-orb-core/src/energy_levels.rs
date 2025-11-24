@@ -1,3 +1,5 @@
+#![allow(nonstandard_style)]
+
 use crate::solver;
 
 /// Integrate for a given energy E and return ψ(r_end)
@@ -25,7 +27,7 @@ pub fn find_eigen_energy_bisection(
     max_iter: usize,
 ) -> Result<f64, &'static str> {
     let mut psi_low = psi_at_r_end(e_low, params, opt);
-    let mut psi_high = psi_at_r_end(e_high, params, opt);
+    let psi_high = psi_at_r_end(e_high, params, opt);
 
     if psi_low * psi_high > 0.0 {
         return Err("No sign change of ψ(r_end) in [e_low, e_high]; no eigenvalue bracketed.");
@@ -42,7 +44,7 @@ pub fn find_eigen_energy_bisection(
         // Change of sign -> half the interval
         if psi_low * psi_mid < 0.0 {
             e_high = e_mid;
-            psi_high = psi_mid;
+            //psi_high = psi_mid;
         } else {
             e_low = e_mid;
             psi_low = psi_mid;

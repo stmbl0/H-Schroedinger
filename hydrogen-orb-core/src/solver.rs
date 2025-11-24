@@ -1,3 +1,5 @@
+#![allow(nonstandard_style)]
+
 use crate::constants;
 use crate::potential;
 
