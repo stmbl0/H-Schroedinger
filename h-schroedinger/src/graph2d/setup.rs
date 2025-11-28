@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use bevy::{camera::ScalingMode, prelude::*};
 use bevy_pancam;
 
 use crate::graph2d::tag;
@@ -12,8 +12,14 @@ pub fn setup_system(
         Camera2d,
         tag::Graph2DTag,
         bevy_pancam::PanCam {
+            min_scale: 0.5,
+            max_scale: 5.0,
             ..Default::default()
         },
+        Projection::Orthographic(OrthographicProjection {
+            scale: 2.5,
+            ..OrthographicProjection::default_2d()
+        }),
     ));
 
     const X_EXTENT: f32 = 900.;
