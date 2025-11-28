@@ -1,27 +1,16 @@
-use bevy::{camera::ScalingMode, prelude::*};
-use bevy_pancam;
+use bevy::prelude::*;
 
-use crate::graph2d::tag;
+use crate::graph2d::{camera, tag};
 
 pub fn setup_system(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
-    commands.spawn((
-        Camera2d,
-        tag::Graph2DTag,
-        bevy_pancam::PanCam {
-            min_scale: 0.5,
-            max_scale: 5.0,
-            ..Default::default()
-        },
-        Projection::Orthographic(OrthographicProjection {
-            scale: 2.5,
-            ..OrthographicProjection::default_2d()
-        }),
-    ));
+    // Setup camera first
+    camera::setup_camera_system(commands.reborrow());
 
+    // Create some example shapes for testing
     const X_EXTENT: f32 = 900.;
 
     let shapes = [

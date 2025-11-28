@@ -1,12 +1,13 @@
 use bevy::prelude::*;
-use bevy_pancam::PanCam;
+use bevy::window::PrimaryWindow;
 
+use crate::graph2d::camera::{GraphCamera, get_camera_viewport};
 use crate::graph2d::tag::Graph2DTag;
 
 // Constants
-pub const BOHR_RADIUS_UNITS: f32 = 25.0; // 1 a0 = 200 bevy units
-pub const MAX_RADIUS_A0: f32 = 100.0; // Maximum radius in Bohr radii
-pub const BASE_TICK_SPACING_A0: f32 = 1.0; // Base tick spacing in Bohr radii
+pub const BASE_BOHR_RADIUS_UNITS: f32 = 200.0; // Base: 1 a0 = 200 bevy units at zoom 1.0
+pub const MAX_RADIUS_A0: f32 = 100.0;
+pub const BASE_TICK_SPACING_A0: f32 = 1.0;
 
 // Components
 #[derive(Component)]
@@ -39,7 +40,7 @@ impl Default for AxisConfig {
     }
 }
 
-// Systems
+// Setup axis system
 pub fn setup_axis_system(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -47,13 +48,9 @@ pub fn setup_axis_system(
 ) {
     commands.insert_resource(AxisConfig::default());
 
-    // Create X-axis line
-    let x_axis_length = MAX_RADIUS_A0 * BOHR_RADIUS_UNITS;
+    // Create X-axis line - simple unit line that will be scaled by update system
     commands.spawn((
-        Mesh2d(meshes.add(Segment2d::new(
-            Vec2::new(0.0, 0.0),
-            Vec2::new(x_axis_length, 0.0),
-        ))),
+        Mesh2d(meshes.add(Segment2d::new(Vec2::new(0.0, 0.0), Vec2::new(1.0, 0.0)))),
         MeshMaterial2d(materials.add(Color::srgb(0.2, 0.2, 0.2))),
         Transform::from_xyz(0.0, 0.0, 1.0),
         Graph2DTag,
@@ -61,19 +58,19 @@ pub fn setup_axis_system(
         XAxis,
     ));
 
-    // Create Y-axis line (short, just for reference)
+    // Create Y-axis line
     commands.spawn((
         Mesh2d(meshes.add(Segment2d::new(
             Vec2::new(0.0, -100.0),
             Vec2::new(0.0, 100.0),
         ))),
         MeshMaterial2d(materials.add(Color::srgb(0.2, 0.2, 0.2))),
-        Transform::from_xyz(0.0, 0.0, 1.0),
+        Transform::default(),
         Graph2DTag,
         AxisTag,
     ));
 
-    // Create unit label at the end of x-axis
+    // Create unit label at the end of x-axis - will be repositioned by update system
     commands.spawn((
         Text2d::new("a₀"),
         TextFont {
@@ -81,23 +78,37 @@ pub fn setup_axis_system(
             ..default()
         },
         TextColor(Color::srgb(0.2, 0.2, 0.2)),
-        Transform::from_xyz(x_axis_length + 20.0, 10.0, 2.0),
+        Transform::default(),
         Graph2DTag,
         AxisTag,
         XAxisUnitLabel,
     ));
 }
 
+// Update axis system based on camera position and zoom
 pub fn update_axis_ticks_system(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     mut axis_config: ResMut<AxisConfig>,
-    camera_query: Query<(&Transform, &Projection), (With<Camera>, With<PanCam>)>,
+    camera_query: Query<(&Transform, &GraphCamera), With<Camera>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut x_axis_query: Query<
+        &mut Transform,
+        (With<XAxis>, Without<Camera>, Without<XAxisUnitLabel>),
+    >,
+    mut unit_label_query: Query<
+        &mut Transform,
+        (With<XAxisUnitLabel>, Without<Camera>, Without<XAxis>),
+    >,
     tick_query: Query<Entity, With<XAxisTick>>,
     label_query: Query<Entity, With<XAxisLabel>>,
 ) {
-    let Ok((camera_transform, projection)) = camera_query.single() else {
+    let Ok((camera_transform, graph_camera)) = camera_query.single() else {
+        return;
+    };
+
+    let Ok(window) = windows.single() else {
         return;
     };
 
@@ -109,19 +120,19 @@ pub fn update_axis_ticks_system(
         commands.entity(entity).despawn();
     }
 
-    // Get camera viewport size
-    let viewport_width = match projection {
-        Projection::Orthographic(ortho) => ortho.area.width(),
-        _ => 1000.0, // fallback
-    };
+    let window_size = Vec2::new(window.width(), window.height());
+    let (viewport_min, viewport_max) = get_camera_viewport(camera_transform, window_size);
+    let zoom = graph_camera.current_zoom;
 
-    // Calculate appropriate tick spacing
-    let camera_x = camera_transform.translation.x;
-    let visible_width_world = viewport_width;
-    let visible_width_a0 = visible_width_world / BOHR_RADIUS_UNITS;
+    // Calculate effective units per world coordinate (accounts for zoom)
+    let effective_bohr_units = BASE_BOHR_RADIUS_UNITS / zoom;
 
-    // Adjust tick spacing to maintain reasonable number of ticks (aim for 5-15 ticks)
-    let target_tick_count = 30.0;
+    // Calculate visible range in a0 units
+    let visible_width_world = viewport_max.x - viewport_min.x;
+    let visible_width_a0 = visible_width_world / effective_bohr_units;
+
+    // Calculate appropriate tick spacing - show more ticks
+    let target_tick_count = 15.0;
     let ideal_spacing = visible_width_a0 / target_tick_count;
 
     // Round to nearest power of 2 times base spacing
@@ -135,31 +146,43 @@ pub fn update_axis_ticks_system(
 
     axis_config.current_tick_spacing_a0 = tick_spacing;
 
+    // Update X-axis line - scale it to proper length, keep at origin
+    let x_axis_length = axis_config.max_radius_a0 * effective_bohr_units;
+    if let Ok(mut x_axis_transform) = x_axis_query.single_mut() {
+        x_axis_transform.scale = Vec3::new(x_axis_length, 1.0, 1.0);
+        x_axis_transform.translation = Vec3::new(0.0, 0.0, 1.0);
+    }
+
+    // Update unit label position
+    if let Ok(mut unit_transform) = unit_label_query.single_mut() {
+        unit_transform.translation = Vec3::new(x_axis_length + 20.0, 10.0, 2.0);
+    }
+
     // Calculate tick positions within visible range
-    let tick_spacing_world = tick_spacing * BOHR_RADIUS_UNITS;
-    let left_edge = camera_x - visible_width_world / 2.0;
-    let right_edge = camera_x + visible_width_world / 2.0;
+    let tick_spacing_world = tick_spacing * effective_bohr_units;
+    let left_edge = viewport_min.x.max(0.0); // Only show positive x values
+    let right_edge = viewport_max.x.min(x_axis_length);
 
-    // Find first tick position
-    let first_tick_index = (left_edge.max(0.0) / tick_spacing_world).floor() as i32;
-    let last_tick_index = (right_edge.min(axis_config.max_radius_a0 * BOHR_RADIUS_UNITS)
-        / tick_spacing_world)
-        .ceil() as i32;
+    // Find first and last tick indices
+    let first_tick_index = (left_edge / tick_spacing_world).floor() as i32;
+    let last_tick_index = (right_edge / tick_spacing_world).ceil() as i32;
 
-    // Calculate tick size based on zoom level
-    let tick_height = (visible_width_world * 0.01).clamp(5.0, 20.0);
+    // Smaller fixed sizes for ticks and labels
+    let tick_height = 10.0;
+    let font_size = 12.0;
+    let label_offset = tick_height + 10.0;
 
     // Create ticks and labels
     for i in first_tick_index..=last_tick_index {
         let tick_position_world = i as f32 * tick_spacing_world;
-        let tick_position_a0 = tick_position_world / BOHR_RADIUS_UNITS;
+        let tick_position_a0 = tick_position_world / effective_bohr_units;
 
         // Skip if outside valid range
         if tick_position_world < 0.0 || tick_position_a0 > axis_config.max_radius_a0 {
             continue;
         }
 
-        // Create tick mark with adaptive height
+        // Create tick mark with fixed size
         commands.spawn((
             Mesh2d(meshes.add(Segment2d::new(
                 Vec2::new(0.0, -tick_height),
@@ -172,7 +195,7 @@ pub fn update_axis_ticks_system(
             XAxisTick,
         ));
 
-        // Create text label with adaptive formatting
+        // Create text label with fixed size
         let label_text = if tick_position_a0 == 0.0 {
             "0".to_string()
         } else if tick_spacing >= 1.0 {
@@ -180,10 +203,6 @@ pub fn update_axis_ticks_system(
         } else {
             format!("{:.1}", tick_position_a0)
         };
-
-        // Calculate font size and position based on zoom
-        let font_size = (visible_width_world * 0.02).clamp(12.0, 24.0);
-        let label_offset = tick_height + font_size * 0.8;
 
         commands.spawn((
             Text2d::new(label_text),
@@ -198,4 +217,23 @@ pub fn update_axis_ticks_system(
             XAxisLabel,
         ));
     }
+}
+
+// Helper function to convert a0 units to world coordinates (zoom-aware)
+pub fn a0_to_world(a0_x: f32, zoom: f32) -> f32 {
+    a0_x * (BASE_BOHR_RADIUS_UNITS / zoom)
+}
+
+// Helper function to convert world coordinates to a0 units (zoom-aware)
+pub fn world_to_a0(world_x: f32, zoom: f32) -> f32 {
+    world_x / (BASE_BOHR_RADIUS_UNITS / zoom)
+}
+
+// Helper functions for plotting
+pub fn plot_value_to_world_y(plot_value: f32, scale_factor: f32) -> f32 {
+    plot_value * scale_factor
+}
+
+pub fn world_y_to_plot_value(world_y: f32, scale_factor: f32) -> f32 {
+    world_y / scale_factor
 }
